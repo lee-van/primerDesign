@@ -1,6 +1,6 @@
 #!/usr/bin/python2.7
 # designPrimers.py
-# v1.0
+# v1.1
 
 import sys
 from Bio import SeqIO
@@ -28,19 +28,17 @@ MFEprimer="/Data05/evlee/packages/MFEprimer-v2.0/MFEprimer.py"
 # command line arguments
 parser = argparse.ArgumentParser(description="Takes a bam file that has been sorted with redundant reads removed and generates a HAMR predicted_mods.txt output")
 parser.add_argument('inFasta',help='Per-transcript or per-gene fasta')
-parser.add_argument('inBED',help='bed file of target transcripts or genes')
 parser.add_argument('inMFEprimerDB',help='MFEprimer database prefix')
 parser.add_argument('output',help='tabular output file of designed primers')
-
-parser.add_argument('--tempdir', '-t', action='store', dest='tempdir', nargs='?', help='specify temp folder')
-parser.add_argument('--retain_tempfiles','-r',action='store_true',help='Use this tag to keep primer3 and MFEprimer intermediate files')
+parser.add_argument('--inBED', '-b', action='store', dest='inBED', nargs='?', help='bed file of target transcripts or genes')
+parser.add_argument('--outDir', '-o', action='store', dest='outDir', nargs='?', help='retain intermediatre files to an output folder')
 parser.add_argument('--silent','-s',action='store_true',help='Suppress output messages')
 
 args=parser.parse_args()
 
 # make tmp directory
-if args.tempdir:
-	tmpDIR = args.tempdir
+if args.outDir:
+	tmpDIR = args.outDir
 else:
 	now = datetime.datetime.now()
 	datelist = [str(now.year),str(now.month),str(now.day),str(now.hour),str(now.minute),str(now.second),str(now.microsecond)]
@@ -50,17 +48,18 @@ subprocess.check_call(['mkdir', '-p', tmpDIR])
 
 
 #read through gene list bed
-openBED = open(args.inBED,'r')
 geneList=[]
-for i in openBED:
-	j=i.rstrip().split("\t")
-	geneList.append(j[3])
-openBED.close()
+if args.inBED:
+	openBED = open(args.inBED,'r')
+	for i in openBED:
+		j=i.rstrip().split("\t")
+		geneList.append(j[3])
+	openBED.close()
 
 #write primer3 input files (boulder I/O) for each target
 Primer3InputFiles = []
 for record in SeqIO.parse(args.inFasta, "fasta"):
-    if record.id in geneList:
+    if record.id in geneList or not args.inBED:
 		gene = re.sub(r'\.\d+$', '', record.id)
 		#outFile = tmpDIR + "/" + record.id + ".fa"
 		Primer3InputFile = tmpDIR + "/" + record.id + ".io"
@@ -98,7 +97,7 @@ for Primer3InputFile in Primer3InputFiles:
 
 #parse primer3 output. For each primer pair, run MFEprimer and parse output to tabular file
 outputFH = open(args.output, 'w')
-outputFH.write("target" + "\t" + "pair" + "\t" + "right" + "\t" + "left" + "\t" + "right.Tm" + "\t" + "left.Tm" + "\t" + "ampliconSize" + "\t" + "predictedTargets" + "\n")
+outputFH.write("target" + "\t" + "pair" + "\t" + "left" + "\t" + "right" + "\t" + "left.Tm" + "\t" + "right.Tm" + "\t" + "ampliconSize" + "\t" + "predictedTargets" + "\t" + "dimerTm" + "\t" + "left.selfTm" + "\t" + "right.selfTm" + "\t" + "left.hairpinTm" + "\t" + "right.hairpintTm" + "\n")
 
 for Primer3ResultsFile in Primer3ResultsFiles:
 	Primer3ResultsFileFH = open(Primer3ResultsFile,'r')
@@ -107,6 +106,11 @@ for Primer3ResultsFile in Primer3ResultsFiles:
 	penalty = []
 	leftTm = []
 	rightTm = []
+	leftSelf = []
+	rightSelf = []
+	leftHairpin = []
+	rightHairin = []
+	complementarity = []
 	size = []
 	target = ""
 	current_primer_pair = ""
@@ -130,6 +134,7 @@ for Primer3ResultsFile in Primer3ResultsFiles:
 			if primer_pair != current_primer_pair:
 				sys.exit("Primer 3 output not properly sorted")		
 			rightPrimer.append(m.group(2))
+		# Tm
 		m = re.search(r'PRIMER_LEFT_(\d+)_TM=(.+?)$', line)
 		if m:
 			primer_pair = m.group(1)
@@ -142,12 +147,45 @@ for Primer3ResultsFile in Primer3ResultsFiles:
 			if primer_pair != current_primer_pair:
 				sys.exit("Primer 3 output not properly sorted")		
 			rightTm.append(m.group(2))
+		# QC thermodynamics
+		m = re.search(r'PRIMER_LEFT_(\d+)_SELF_ANY_TH=(.+?)$', line)
+		if m:
+			primer_pair = m.group(1)
+			if primer_pair != current_primer_pair:
+				sys.exit("Primer 3 output not properly sorted")		
+			leftSelf.append(m.group(2))
+		m = re.search(r'PRIMER_RIGHT_(\d+)_SELF_ANY_TH=(.+?)$', line)
+		if m:
+			primer_pair = m.group(1)
+			if primer_pair != current_primer_pair:
+				sys.exit("Primer 3 output not properly sorted")		
+			rightSelf.append(m.group(2))
+		m = re.search(r'PRIMER_LEFT_(\d+)_HAIRPIN_TH=(.+?)$', line)
+		if m:
+			primer_pair = m.group(1)
+			if primer_pair != current_primer_pair:
+				sys.exit("Primer 3 output not properly sorted")		
+			leftHairpin.append(m.group(2))
+		m = re.search(r'PRIMER_RIGHT_(\d+)_HAIRPIN_TH=(.+?)$', line)
+		if m:
+			primer_pair = m.group(1)
+			if primer_pair != current_primer_pair:
+				sys.exit("Primer 3 output not properly sorted")		
+			rightHairin.append(m.group(2))
+		m = re.search(r'PRIMER_PAIR_(\d+)_COMPL_ANY_TH=(.+?)$', line)
+		if m:
+			primer_pair = m.group(1)
+			if primer_pair != current_primer_pair:
+				sys.exit("Primer 3 output not properly sorted")		
+			complementarity.append(m.group(2))
+		#size
 		m = re.search(r'PRIMER_PAIR_(\d+)_PRODUCT_SIZE=(.+?)$', line)
 		if m:
 			primer_pair = m.group(1)
 			if primer_pair != current_primer_pair:
 				sys.exit("Primer 3 output not properly sorted")		
 			size.append(m.group(2))
+
 	Primer3ResultsFileFH.close()
 
 	#check that all attributes captured
@@ -159,7 +197,7 @@ for Primer3ResultsFile in Primer3ResultsFiles:
 		print "analyzing potential off-targets for: "+target
 	PrimerPairsFile = Primer3ResultsFile.replace(".p3", ".primerPairs.txt")
 	PrimerPairsFileFH = open(PrimerPairsFile, "w")
-	PrimerPairsFileFH.write("target" + "\t" + "pair" + "\t" + "right" + "\t" + "left" + "\t" + "right.Tm" + "\t" + "left.Tm" + "\t" + "ampliconSize" + "\t" + "predictedTargets" + "\n")
+	PrimerPairsFileFH.write("target" + "\t" + "pair" + "\t" + "left" + "\t" + "right" + "\t" + "left.Tm" + "\t" + "right.Tm" + "\t" + "ampliconSize" + "\t" + "predictedTargets" + "\t" + "dimerPenalty" + "\t" + "left.selfTm" + "\t" + "right.selfTm" + "\t" + "left.hairpinTm" + "\t" + "right.hairpintTm" + "\n")
 	for index in range(0, len(rightPrimer)):
 		pairFasta = tmpDIR + "/" + target + ".pair" + str(index) + ".fa"
 		pairFastaFH = open(pairFasta, "w")
@@ -181,9 +219,9 @@ for Primer3ResultsFile in Primer3ResultsFiles:
 		targetsOutput = ";".join(targets)
 		PrimerPairsFileFH.write(target + "\t" + str(index) + "\t" + rightPrimer[index] + "\t" + leftPrimer
 			[index] + "\t" + rightTm[index] + "\t" + leftTm[index] + "\t" + size[index] + "\t" + targetsOutput + "\n")
-		outputFH.write(target + "\t" + str(index) + "\t" + rightPrimer[index] + "\t" + leftPrimer[index] + "\t" + rightTm[index] + "\t" + leftTm[index] + "\t" + size[index] + "\t" + targetsOutput + "\n")
+		outputFH.write(target + "\t" + str(index) + "\t" + leftPrimer[index] + "\t" + rightPrimer[index] + "\t" + leftTm[index] + "\t" + rightTm[index] + "\t" + size[index] + "\t" + targetsOutput + "\t" + complementarity[index] + "\t" + leftSelf[index] + "\t" + rightSelf[index] + "\t" + leftHairpin[index] + "\t" + rightHairin[index]+ "\n")
 
-if not args.retain_tempfiles:
+if not args.outDir:
 	shutil.rmtree(tmpDIR)
 
 
