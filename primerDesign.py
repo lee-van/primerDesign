@@ -1,6 +1,5 @@
-#!/usr/bin/python2.7
 # designPrimers.py
-# v1.1
+# v1.2
 
 import sys
 from Bio import SeqIO
@@ -13,17 +12,18 @@ import datetime
 import re
 from distutils import spawn
 
-PRIMER3=spawn.find_executable("/Data05/evlee/packages/primer3-2.3.7/src/primer3_core") #change once install globally
+
+PRIMER3=spawn.find_executable("/Data05/evlee/packages/primer3-2.3.7/src/primer3_core") #change once installed globally
 if PRIMER3 is None:
-   print "***ERROR: primer3_core is not found"
+   print("***ERROR: primer3_core is not found")
    sys.exit("Please install primer3_core or make sure it is in the PATH")
 
-PYTHON=spawn.find_executable("python")
-if PYTHON is None:
-   print "***ERROR: python is not found"
-   sys.exit("Please install / python or make sure it is in the PATH")
+PYTHON2=spawn.find_executable("python2.7")
+if PYTHON2 is None:
+   print("***ERROR: python2.7 is not found")
+   sys.exit("Please install / python2.7 or make sure it is in the PATH")
 
-MFEprimer="/Data05/evlee/packages/MFEprimer-v2.0/MFEprimer.py"
+MFEprimer="/Data05/evlee/packages/MFEprimer-v2.0/MFEprimer.py" #change once installed globally
 
 # command line arguments
 parser = argparse.ArgumentParser(description="Takes a bam file that has been sorted with redundant reads removed and generates a HAMR predicted_mods.txt output")
@@ -33,6 +33,7 @@ parser.add_argument('output',help='tabular output file of designed primers')
 parser.add_argument('--inBED', '-b', action='store', dest='inBED', nargs='?', help='bed file of target transcripts or genes')
 parser.add_argument('--outDir', '-o', action='store', dest='outDir', nargs='?', help='retain intermediatre files to an output folder')
 parser.add_argument('--silent','-s',action='store_true',help='Suppress output messages')
+parser.add_argument('--timeout','-t',action='store', dest='timeout', type=int, default=60, help='(Seconds) Skip primer3 or MFEprimer run if hanging longer than this time')
 
 args=parser.parse_args()
 
@@ -59,12 +60,10 @@ if args.inBED:
 #write primer3 input files (boulder I/O) for each target
 Primer3InputFiles = []
 for record in SeqIO.parse(args.inFasta, "fasta"):
-    if record.id in geneList or not args.inBED:
+	if record.id in geneList or not args.inBED:
 		gene = re.sub(r'\.\d+$', '', record.id)
-		#outFile = tmpDIR + "/" + record.id + ".fa"
 		Primer3InputFile = tmpDIR + "/" + record.id + ".io"
 		Primer3InputFiles.append(Primer3InputFile)
-		#SeqIO.write(record, outFile, "fasta")
 		Primer3InputFileFH = open(Primer3InputFile, "w")
 		Primer3InputFileFH.write("SEQUENCE_ID="+str(record.id)+"\n")
 		Primer3InputFileFH.write("SEQUENCE_TEMPLATE="+str(record.seq)+"\n")
@@ -85,20 +84,26 @@ for record in SeqIO.parse(args.inFasta, "fasta"):
 
 #run primer3
 Primer3ResultsFiles = []
+Primer3TimedOut = []
 for Primer3InputFile in Primer3InputFiles:
 	if not args.silent:
 		target = Primer3InputFile.replace(tmpDIR + "/", "").replace(".io", "")
-		print "Designing primers for target: "+target
+		print ("Designing primers for target: "+target)
 	Primer3ResultsFile = Primer3InputFile.replace(".io", ".p3")
-	Primer3ResultsFiles.append(Primer3ResultsFile)
 	Primer3ResultsFileFH = open(Primer3ResultsFile, "w")
-	subprocess.check_call([PRIMER3, Primer3InputFile], stdout=Primer3ResultsFileFH)
+	try:
+		subprocess.run([PRIMER3, Primer3InputFile], stdout=Primer3ResultsFileFH, timeout=args.timeout)
+	except subprocess.TimeoutExpired:
+		Primer3TimedOut.append(target)
+		continue
+	Primer3ResultsFiles.append(Primer3ResultsFile)
 	Primer3ResultsFileFH.close()
 
 #parse primer3 output. For each primer pair, run MFEprimer and parse output to tabular file
 outputFH = open(args.output, 'w')
 outputFH.write("target" + "\t" + "pair" + "\t" + "left" + "\t" + "right" + "\t" + "left.Tm" + "\t" + "right.Tm" + "\t" + "ampliconSize" + "\t" + "predictedTargets" + "\t" + "dimerTm" + "\t" + "left.selfTm" + "\t" + "right.selfTm" + "\t" + "left.hairpinTm" + "\t" + "right.hairpintTm" + "\n")
 
+MFEprimerTimedOut = []
 for Primer3ResultsFile in Primer3ResultsFiles:
 	Primer3ResultsFileFH = open(Primer3ResultsFile,'r')
 	rightPrimer = []
@@ -194,7 +199,7 @@ for Primer3ResultsFile in Primer3ResultsFiles:
 
 	#For each primer pair, run MFEprimer. Parse output to tabular file
 	if not args.silent:
-		print "analyzing potential off-targets for: "+target
+		print("analyzing potential off-targets for: "+target)
 	PrimerPairsFile = Primer3ResultsFile.replace(".p3", ".primerPairs.txt")
 	PrimerPairsFileFH = open(PrimerPairsFile, "w")
 	PrimerPairsFileFH.write("target" + "\t" + "pair" + "\t" + "left" + "\t" + "right" + "\t" + "left.Tm" + "\t" + "right.Tm" + "\t" + "ampliconSize" + "\t" + "predictedTargets" + "\t" + "dimerPenalty" + "\t" + "left.selfTm" + "\t" + "right.selfTm" + "\t" + "left.hairpinTm" + "\t" + "right.hairpintTm" + "\n")
@@ -208,7 +213,11 @@ for Primer3ResultsFile in Primer3ResultsFiles:
 		pairFastaFH.close()
 		MFEprimerResultsFile = tmpDIR + "/" + target + ".pair" + str(index) + ".MFEprimer.txt"
 		MFEprimerResultsFileFH = open(MFEprimerResultsFile, 'w')
-		subprocess.check_call([PYTHON, MFEprimer, "-i", pairFasta, "-d", args.inMFEprimerDB, "--tab"], stdout=MFEprimerResultsFileFH)
+		try:
+			subprocess.run([PYTHON2, MFEprimer, "-i", pairFasta, "-d", args.inMFEprimerDB, "--tab"], stdout=MFEprimerResultsFileFH, timeout=args.timeout)
+		except subprocess.TimeoutExpired:
+			MFEprimerTimedOut.append(target + ".pair" + str(index))
+			continue
 		MFEprimerResultsFileFH.close()
 		MFEprimerResultsFileFH = open(MFEprimerResultsFile, 'r')
 		targets = []
@@ -223,6 +232,18 @@ for Primer3ResultsFile in Primer3ResultsFiles:
 
 if not args.outDir:
 	shutil.rmtree(tmpDIR)
+
+## write TimedOut processes to log file
+print (Primer3TimedOut)
+logFH = open(args.output+".log", 'w')
+logFH.write("###unable to run Primer3 in "+str(args.timeout)+" seconds for the the following targets:\n")
+for target in Primer3TimedOut:
+	logFH.write(target+"\n")
+logFH.write("###unable to run MFEprimer in "+str(args.timeout)+" seconds for the the following primer pairs:\n")
+for target in MFEprimerTimedOut:
+	logFH.write(target+"\n")
+logFH.close()
+
 
 
 
