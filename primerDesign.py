@@ -1,5 +1,5 @@
 # designPrimers.py
-# v1.2
+# v1.3
 
 import sys
 from Bio import SeqIO
@@ -11,6 +11,10 @@ import shutil
 import datetime
 import re
 from distutils import spawn
+
+if sys.hexversion < 50660336:
+    print ("Detected Python " + sys.version)
+    sys.exit("***ERROR: Must be using Python 3.5.x or above")
 
 
 PRIMER3=spawn.find_executable("/Data05/evlee/packages/primer3-2.3.7/src/primer3_core") #change once installed globally
