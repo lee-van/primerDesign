@@ -238,7 +238,6 @@ if not args.outDir:
 	shutil.rmtree(tmpDIR)
 
 ## write TimedOut processes to log file
-print (Primer3TimedOut)
 logFH = open(args.output+".log", 'w')
 logFH.write("###unable to run Primer3 in "+str(args.timeout)+" seconds for the the following targets:\n")
 for target in Primer3TimedOut:
